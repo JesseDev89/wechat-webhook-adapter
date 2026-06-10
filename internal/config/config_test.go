@@ -34,8 +34,8 @@ func TestNew_Defaults(t *testing.T) {
 	if cfg.WebhookKey != "" {
 		t.Errorf("期望 WebhookKey='', 实际='%s'", cfg.WebhookKey)
 	}
-	if cfg.Port != "8080" {
-		t.Errorf("期望 Port='8080', 实际='%s'", cfg.Port)
+	if cfg.Port != "80" {
+		t.Errorf("期望 Port='80', 实际='%s'", cfg.Port)
 	}
 }
 

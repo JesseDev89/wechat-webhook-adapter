@@ -72,19 +72,19 @@ receivers:
   # 默认接收器 - 企业微信机器人
   - name: 'wechat-default'
     webhook_configs:
-      - url: 'http://wechat-webhook:8080/webhook'
+      - url: 'http://wechat-webhook:80/webhook'
         send_resolved: true  # 告警恢复时也发送通知
 
   # Critical 告警接收器
   - name: 'wechat-critical'
     webhook_configs:
-      - url: 'http://wechat-webhook:8080/webhook'
+      - url: 'http://wechat-webhook:80/webhook'
         send_resolved: true
 
   # Warning 告警接收器
   - name: 'wechat-warning'
     webhook_configs:
-      - url: 'http://wechat-webhook:8080/webhook'
+      - url: 'http://wechat-webhook:80/webhook'
         send_resolved: true
 
   # 空接收器 - 用于忽略某些告警

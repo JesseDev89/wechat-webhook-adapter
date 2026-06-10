@@ -76,7 +76,7 @@ Prometheus Alertmanager 企业微信机器人 Webhook 适配器，将 Alertmanag
 ```bash
 # 设置环境变量
 export WECHAT_WEBHOOK_KEY="your-robot-key"
-export SERVER_PORT="8080"
+export SERVER_PORT="80"
 
 # 运行
 go run main.go
@@ -90,7 +90,7 @@ docker build -t wechat-webhook-adapter .
 
 # 运行容器
 docker run -d \
-  -p 8080:80 \
+  -p 80:80 \
   -e WECHAT_WEBHOOK_KEY="your-robot-key" \
   wechat-webhook-adapter
 ```

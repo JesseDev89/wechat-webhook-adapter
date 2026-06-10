@@ -56,7 +56,7 @@ go mod download
 
 ```bash
 export WECHAT_WEBHOOK_KEY="your-robot-key"
-export SERVER_PORT="8080"
+export SERVER_PORT="80"
 
 go run main.go
 ```
@@ -64,14 +64,14 @@ go run main.go
 服务启动后输出：
 
 ```
-Webhook 服务已启动: http://0.0.0.0:8080/webhook
+Webhook 服务已启动: http://0.0.0.0:80/webhook
 企业微信 Key: 已设置
 ```
 
 ### 4. 验证服务
 
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:80/health
 # 预期输出: {"status":"ok"}
 ```
 
@@ -88,7 +88,7 @@ docker build -t wechat-webhook-adapter:v1.0.0 .
 # 运行容器
 docker run -d \
   --name wechat-webhook \
-  -p 8080:80 \
+  -p 80:80 \
   -e WECHAT_WEBHOOK_KEY="your-robot-key" \
   -e SERVER_PORT="80" \
   --restart unless-stopped \
@@ -154,10 +154,10 @@ kubectl logs -n monitoring -l app=wechat-webhook --tail=50
 
 ```bash
 # 端口转发到本地
-kubectl port-forward -n monitoring svc/wechat-webhook 8080:8080
+kubectl port-forward -n monitoring svc/wechat-webhook 80:80
 
 # 测试健康检查
-curl http://localhost:8080/health
+curl http://localhost:80/health
 ```
 
 ---
@@ -185,7 +185,7 @@ route:
 receivers:
   - name: 'wechat-default'
     webhook_configs:
-      - url: 'http://wechat-webhook:8080/webhook'
+      - url: 'http://wechat-webhook:80/webhook'
         send_resolved: true  # 告警恢复时也发送通知
 ```
 
@@ -208,7 +208,7 @@ kubectl create secret generic alertmanager-prometheus-kube-prometheus-alertmanag
 ### 模拟 Alertmanager 推送
 
 ```bash
-curl -X POST http://localhost:8080/webhook \
+curl -X POST http://localhost:80/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "status": "firing",
@@ -240,7 +240,7 @@ curl -X POST http://localhost:8080/webhook \
 ### 测试告警恢复
 
 ```bash
-curl -X POST http://localhost:8080/webhook \
+curl -X POST http://localhost:80/webhook \
   -H "Content-Type: application/json" \
   -d '{
     "status": "resolved",
@@ -295,7 +295,7 @@ kubectl logs -n monitoring -l app=wechat-webhook -f
 
 # 测试 webhook 连通性
 kubectl run -it --rm debug --image=busybox --restart=Never -- sh
-wget -qO- http://wechat-webhook:8080/health
+wget -qO- http://wechat-webhook:80/health
 ```
 
 ### Q4: 如何更新机器人 Key？
