@@ -30,7 +30,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: wechat-webhook
+  name: wechat-webhook-adapter
   namespace: monitoring
   labels:
     app: wechat-webhook
@@ -85,7 +85,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: wechat-webhook
+  name: wechat-webhook-adapter
   namespace: monitoring
 spec:
   selector:
