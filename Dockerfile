@@ -19,7 +19,7 @@ FROM alpine:3.20
 
 # 创建非 root 用户组和用户（GID/UID 均为 1000）
 RUN addgroup -g 1000 appgroup && \
-    adduser -D -u 1000 -G appgroup appuser
+    adduser -D -u 1000 -G appgroup jesse
 
 WORKDIR /www
 
@@ -27,7 +27,7 @@ WORKDIR /www
 COPY --from=builder /www/wechat-webhook-adapter .
 
 # 切换到非 root 用户
-USER appuser
+USER jesse
 
 # 暴露端口（使用非特权端口，非 root 用户也能运行）
 EXPOSE 80

@@ -49,7 +49,7 @@ spec:
           # ==================== 修改为你的镜像地址 ====================
           # 本地构建: wechat-webhook:v1.0.0
           # 远程仓库: your-registry.com/jesse/wechat-webhook:v1.0.0
-          image: wechat-webhook:v1.0.0
+          image: registry.cn-guangzhou.aliyuncs.com/jesse-dnmp/wechat-webhook-adapter:v1.0.0
           imagePullPolicy: IfNotPresent  # 本地镜像用 IfNotPresent，远程用 Always
           env:
             # ==================== 重要：修改为你的企业微信机器人 Key ====================
