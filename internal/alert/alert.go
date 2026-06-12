@@ -17,6 +17,22 @@ func NewFormatter() *Formatter {
 	return &Formatter{}
 }
 
+// alertItem 提取的告警关键信息
+type alertItem struct {
+	instance  string
+	job       string
+	namespace string
+	summary   string
+}
+
+// alertGroup 聚合后的告警组
+type alertGroup struct {
+	alertname string
+	status    string
+	severity  string
+	items     []alertItem
+}
+
 // Format 格式化告警信息为 Markdown
 func (f *Formatter) Format(payload *types.AlertmanagerPayload) string {
 	var header string
@@ -31,8 +47,9 @@ func (f *Formatter) Format(payload *types.AlertmanagerPayload) string {
 	sb.WriteString(header)
 	sb.WriteString(fmt.Sprintf("> 时间: `%s`\n", now))
 
-	for _, alert := range payload.Alerts {
-		f.formatSingleAlert(&sb, &alert)
+	groups := f.groupAlerts(payload.Alerts)
+	for _, group := range groups {
+		f.formatAlertGroup(&sb, group)
 	}
 
 	if payload.ExternalURL != "" {
@@ -42,29 +59,109 @@ func (f *Formatter) Format(payload *types.AlertmanagerPayload) string {
 	return sb.String()
 }
 
-// formatSingleAlert 格式化单条告警
-func (f *Formatter) formatSingleAlert(sb *bytes.Buffer, alert *types.Alert) {
-	severity := alert.Labels["severity"]
-	alertname := alert.Labels["alertname"]
+// groupAlerts 按 alertname + status 聚合告警
+func (f *Formatter) groupAlerts(alerts []types.Alert) []alertGroup {
+	groupMap := make(map[string]*alertGroup)
+	var order []string
+
+	for i := range alerts {
+		alert := &alerts[i]
+		key := alert.Labels["alertname"] + "|" + alert.Status
+		if g, ok := groupMap[key]; ok {
+			g.items = append(g.items, f.extractAlertItem(alert))
+		} else {
+			groupMap[key] = &alertGroup{
+				alertname: alert.Labels["alertname"],
+				status:    alert.Status,
+				severity:  alert.Labels["severity"],
+				items:     []alertItem{f.extractAlertItem(alert)},
+			}
+			order = append(order, key)
+		}
+	}
+
+	result := make([]alertGroup, 0, len(order))
+	for _, key := range order {
+		result = append(result, *groupMap[key])
+	}
+	return result
+}
+
+func (f *Formatter) extractAlertItem(alert *types.Alert) alertItem {
+	return alertItem{
+		instance:  alert.Labels["instance"],
+		job:       alert.Labels["job"],
+		namespace: alert.Labels["namespace"],
+		summary:   alert.Annotations["summary"],
+	}
+}
+
+// formatAlertGroup 格式化聚合后的告警组
+func (f *Formatter) formatAlertGroup(sb *bytes.Buffer, group alertGroup) {
+	alertname := group.alertname
 	if alertname == "" {
 		alertname = "Unknown"
 	}
-	instance := alert.Labels["instance"]
+
+	icon := f.severityIcon(group.severity)
+
+	if len(group.items) == 1 {
+		f.formatSingleAlert(sb, group, icon, alertname)
+	} else {
+		f.formatMultiAlert(sb, group, icon, alertname)
+	}
+}
+
+// formatSingleAlert 格式化单条告警
+func (f *Formatter) formatSingleAlert(sb *bytes.Buffer, group alertGroup, icon, alertname string) {
+	item := group.items[0]
+	instance := item.instance
+	if instance == "" {
+		instance = item.job
+	}
 	if instance == "" {
 		instance = "unknown"
 	}
-	summary := alert.Annotations["summary"]
+	summary := item.summary
 	if summary == "" {
 		summary = "无描述信息"
 	}
 
-	icon := f.severityIcon(severity)
-
 	sb.WriteString("\n---\n")
-	sb.WriteString(fmt.Sprintf("%s **%s** (%s)\n", icon, alertname, alert.Status))
-	sb.WriteString(fmt.Sprintf("> 严重程度: `%s`\n", severity))
+	sb.WriteString(fmt.Sprintf("%s **%s** (%s)\n", icon, alertname, group.status))
+	sb.WriteString(fmt.Sprintf("> 严重程度: `%s`\n", group.severity))
 	sb.WriteString(fmt.Sprintf("> 实例: `%s`\n", instance))
+	if item.job != "" {
+		sb.WriteString(fmt.Sprintf("> Job: `%s`\n", item.job))
+	}
+	if item.namespace != "" {
+		sb.WriteString(fmt.Sprintf("> 命名空间: `%s`\n", item.namespace))
+	}
 	sb.WriteString(fmt.Sprintf("> 描述: %s\n", summary))
+}
+
+// formatMultiAlert 格式化多条聚合告警
+func (f *Formatter) formatMultiAlert(sb *bytes.Buffer, group alertGroup, icon, alertname string) {
+	sb.WriteString("\n---\n")
+	sb.WriteString(fmt.Sprintf("%s **%s** (%s) [%d 条]\n", icon, alertname, group.status, len(group.items)))
+	sb.WriteString(fmt.Sprintf("> 严重程度: `%s`\n", group.severity))
+	sb.WriteString("> 告警对象:\n")
+	for _, item := range group.items {
+		name := item.instance
+		if name == "" {
+			name = item.job
+		}
+		if name == "" {
+			name = "unknown"
+		}
+		if item.namespace != "" {
+			name = fmt.Sprintf("%s (%s)", name, item.namespace)
+		}
+		sb.WriteString(fmt.Sprintf("> - %s\n", name))
+	}
+	if group.items[0].summary != "" {
+		sb.WriteString(fmt.Sprintf("> 描述: %s\n", group.items[0].summary))
+	}
 }
 
 // severityIcon 根据严重程度返回对应的 emoji
