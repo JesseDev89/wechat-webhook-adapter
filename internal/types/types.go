@@ -16,7 +16,7 @@ type MarkdownContent struct {
 type AlertmanagerPayload struct {
 	Status      string  `json:"status"`
 	Alerts      []Alert `json:"alerts"`
-	ExternalURL string  `json:"external_url"`
+	ExternalURL string  `json:"externalURL"`
 }
 
 // Alert 单条告警信息

@@ -9,25 +9,21 @@ import (
 
 func TestFormatter_Format(t *testing.T) {
 	formatter := NewFormatter()
-	payload := &types.AlertmanagerPayload{
-		Status: "firing",
-		Alerts: []types.Alert{
-			{
-				Status: "firing",
-				Labels: map[string]string{
-					"alertname": "HighCPU",
-					"severity":  "critical",
-					"instance":  "server-01",
-				},
-				Annotations: map[string]string{
-					"summary": "CPU 使用率过高",
-				},
+	alerts := []types.Alert{
+		{
+			Status: "firing",
+			Labels: map[string]string{
+				"alertname": "HighCPU",
+				"severity":  "critical",
+				"instance":  "server-01",
+			},
+			Annotations: map[string]string{
+				"summary": "CPU 使用率过高",
 			},
 		},
-		ExternalURL: "http://prometheus.example.com",
 	}
 
-	result := formatter.Format(payload)
+	result := formatter.Format("firing", alerts, "http://prometheus.example.com")
 
 	checks := []string{
 		"告警触发",
@@ -47,21 +43,18 @@ func TestFormatter_Format(t *testing.T) {
 
 func TestFormatter_Format_Resolved(t *testing.T) {
 	formatter := NewFormatter()
-	payload := &types.AlertmanagerPayload{
-		Status: "resolved",
-		Alerts: []types.Alert{
-			{
-				Status: "resolved",
-				Labels: map[string]string{
-					"alertname": "TestAlert",
-					"severity":  "warning",
-				},
-				Annotations: map[string]string{},
+	alerts := []types.Alert{
+		{
+			Status: "resolved",
+			Labels: map[string]string{
+				"alertname": "TestAlert",
+				"severity":  "warning",
 			},
+			Annotations: map[string]string{},
 		},
 	}
 
-	result := formatter.Format(payload)
+	result := formatter.Format("resolved", alerts, "")
 
 	if !strings.Contains(result, "告警恢复") {
 		t.Error("期望包含 '告警恢复' 字样")
@@ -70,20 +63,15 @@ func TestFormatter_Format_Resolved(t *testing.T) {
 
 func TestFormatter_Format_EmptyFields(t *testing.T) {
 	formatter := NewFormatter()
-	payload := &types.AlertmanagerPayload{
-		Status: "firing",
-		Alerts: []types.Alert{
-			{
-				Status: "firing",
-				Labels: map[string]string{
-					"severity": "info",
-				},
-				Annotations: map[string]string{},
-			},
+	alerts := []types.Alert{
+		{
+			Status:      "firing",
+			Labels:      map[string]string{"severity": "info"},
+			Annotations: map[string]string{},
 		},
 	}
 
-	result := formatter.Format(payload)
+	result := formatter.Format("firing", alerts, "")
 
 	if !strings.Contains(result, "Unknown") {
 		t.Error("期望 alertname 为空时显示 'Unknown'")
@@ -98,31 +86,28 @@ func TestFormatter_Format_EmptyFields(t *testing.T) {
 
 func TestFormatter_Format_MultipleAlerts(t *testing.T) {
 	formatter := NewFormatter()
-	payload := &types.AlertmanagerPayload{
-		Status: "firing",
-		Alerts: []types.Alert{
-			{
-				Status: "firing",
-				Labels: map[string]string{
-					"alertname": "Alert1",
-					"severity":  "critical",
-					"instance":  "host1",
-				},
-				Annotations: map[string]string{"summary": "问题1"},
+	alerts := []types.Alert{
+		{
+			Status: "firing",
+			Labels: map[string]string{
+				"alertname": "Alert1",
+				"severity":  "critical",
+				"instance":  "host1",
 			},
-			{
-				Status: "firing",
-				Labels: map[string]string{
-					"alertname": "Alert2",
-					"severity":  "warning",
-					"instance":  "host2",
-				},
-				Annotations: map[string]string{"summary": "问题2"},
+			Annotations: map[string]string{"summary": "问题1"},
+		},
+		{
+			Status: "firing",
+			Labels: map[string]string{
+				"alertname": "Alert2",
+				"severity":  "warning",
+				"instance":  "host2",
 			},
+			Annotations: map[string]string{"summary": "问题2"},
 		},
 	}
 
-	result := formatter.Format(payload)
+	result := formatter.Format("firing", alerts, "")
 
 	if !strings.Contains(result, "---") {
 		t.Error("多条告警应包含分隔符 '---'")

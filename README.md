@@ -8,6 +8,8 @@ Prometheus Alertmanager 企业微信机器人 Webhook 适配器，将 Alertmanag
 
 - **接收告警**：接收 Alertmanager 推送的 webhook 告警
 - **消息格式化**：将告警信息自动格式化为易读的 Markdown 消息
+- **同类告警聚合**：相同告警名称 + 状态的告警自动合并展示，避免刷屏
+- **智能告警对象**：按 node > daemonset > instance > job 优先级自动识别告警对象
 - **分级图标**：根据告警严重程度（critical/warning/info）显示不同颜色图标
 - **容器化部署**：提供 Dockerfile 和 Kubernetes 部署配置
 - **健康检查**：内置 `/health` 健康检查端点
@@ -52,13 +54,15 @@ Prometheus Alertmanager 企业微信机器人 Webhook 适配器，将 Alertmanag
 └─────────────────┘     └─────────────────────────┘     └─────────────────┘
                                   │
                                   ▼
-                         ┌────────────────┐
-                         │  格式化告警消息 │
-                         │  - 告警名称     │
-                         │  - 严重程度     │
-                         │  - 实例信息     │
-                         │  - 描述摘要     │
-                         └────────────────┘
+                         ┌────────────────────┐
+                         │  格式化告警消息   │
+                         │  - 告警名称       │
+                         │  - 严重程度       │
+                         │  - 告警对象       │
+                         │  - 命名空间       │
+                         │  - 描述信息       │
+                         │  - 同类告警聚合   │
+                         └────────────────────┘
 ```
 
 ---
@@ -126,17 +130,35 @@ kubectl apply -f wechat-webhook-k8s.yaml
 
 企业微信机器人收到的消息格式示例：
 
+### 单条告警
+
 ```
-🚨 Prometheus 告警触发
-> 时间: `2024-01-15 10:30:00`
+🚨 **Prometheus 告警触发**
+> 时间: `2026-06-12 12:33:11`
 
 ---
-🔴 **HighMemoryUsage** (firing)
-> 严重程度: `critical`
-> 实例: `web-server-01`
-> 描述: 内存使用率超过 90%
+🟡 **KubeNodeNotReady** (firing)
+> 严重程度: `warning`
+> 告警对象: `k8s-node-02`
+> 命名空间: `monitoring`
+> 描述: k8s-node-02 has been unready for more than 15 minutes on cluster .
 
 [查看详情](http://alertmanager.example.com)
+```
+
+### 同类告警聚合
+
+```
+✅ **Prometheus 告警恢复**
+> 时间: `2026-06-12 12:12:56`
+
+---
+🟡 **KubeDaemonSetRolloutStuck** (resolved) [2 条]
+> 严重程度: `warning`
+> 告警对象:
+> - calico-node (kube-system)
+> - kube-proxy (kube-system)
+> 描述: DaemonSet kube-system/calico-node has not finished or progressed for at least 15m.
 ```
 
 ---

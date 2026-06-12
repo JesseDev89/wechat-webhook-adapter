@@ -19,10 +19,13 @@ func NewFormatter() *Formatter {
 
 // alertItem 提取的告警关键信息
 type alertItem struct {
-	instance  string
-	job       string
-	namespace string
-	summary   string
+	node        string
+	daemonset   string
+	instance    string
+	job         string
+	namespace   string
+	summary     string
+	description string
 }
 
 // alertGroup 聚合后的告警组
@@ -34,9 +37,9 @@ type alertGroup struct {
 }
 
 // Format 格式化告警信息为 Markdown
-func (f *Formatter) Format(payload *types.AlertmanagerPayload) string {
+func (f *Formatter) Format(status string, alerts []types.Alert, externalURL string) string {
 	var header string
-	if payload.Status == "firing" {
+	if status == "firing" {
 		header = "🚨 **Prometheus 告警触发**\n"
 	} else {
 		header = "✅ **Prometheus 告警恢复**\n"
@@ -47,13 +50,13 @@ func (f *Formatter) Format(payload *types.AlertmanagerPayload) string {
 	sb.WriteString(header)
 	sb.WriteString(fmt.Sprintf("> 时间: `%s`\n", now))
 
-	groups := f.groupAlerts(payload.Alerts)
+	groups := f.groupAlerts(alerts)
 	for _, group := range groups {
 		f.formatAlertGroup(&sb, group)
 	}
 
-	if payload.ExternalURL != "" {
-		sb.WriteString(fmt.Sprintf("\n[查看详情](%s)\n", payload.ExternalURL))
+	if externalURL != "" {
+		sb.WriteString(fmt.Sprintf("\n[查看详情](%s)\n", externalURL))
 	}
 
 	return sb.String()
@@ -89,11 +92,42 @@ func (f *Formatter) groupAlerts(alerts []types.Alert) []alertGroup {
 
 func (f *Formatter) extractAlertItem(alert *types.Alert) alertItem {
 	return alertItem{
-		instance:  alert.Labels["instance"],
-		job:       alert.Labels["job"],
-		namespace: alert.Labels["namespace"],
-		summary:   alert.Annotations["summary"],
+		node:        alert.Labels["node"],
+		daemonset:   alert.Labels["daemonset"],
+		instance:    alert.Labels["instance"],
+		job:         alert.Labels["job"],
+		namespace:   alert.Labels["namespace"],
+		summary:     alert.Annotations["summary"],
+		description: alert.Annotations["description"],
 	}
+}
+
+// displayName 获取告警对象的展示名称
+// 优先级: node > daemonset > instance > job > unknown
+func displayName(item alertItem) string {
+	switch {
+	case item.node != "":
+		return item.node
+	case item.daemonset != "":
+		return item.daemonset
+	case item.instance != "":
+		return item.instance
+	case item.job != "":
+		return item.job
+	default:
+		return "unknown"
+	}
+}
+
+// displayDesc 获取告警描述，优先使用 description
+func displayDesc(item alertItem) string {
+	if item.description != "" {
+		return item.description
+	}
+	if item.summary != "" {
+		return item.summary
+	}
+	return "无描述信息"
 }
 
 // formatAlertGroup 格式化聚合后的告警组
@@ -115,29 +149,15 @@ func (f *Formatter) formatAlertGroup(sb *bytes.Buffer, group alertGroup) {
 // formatSingleAlert 格式化单条告警
 func (f *Formatter) formatSingleAlert(sb *bytes.Buffer, group alertGroup, icon, alertname string) {
 	item := group.items[0]
-	instance := item.instance
-	if instance == "" {
-		instance = item.job
-	}
-	if instance == "" {
-		instance = "unknown"
-	}
-	summary := item.summary
-	if summary == "" {
-		summary = "无描述信息"
-	}
 
 	sb.WriteString("\n---\n")
 	sb.WriteString(fmt.Sprintf("%s **%s** (%s)\n", icon, alertname, group.status))
 	sb.WriteString(fmt.Sprintf("> 严重程度: `%s`\n", group.severity))
-	sb.WriteString(fmt.Sprintf("> 实例: `%s`\n", instance))
-	if item.job != "" {
-		sb.WriteString(fmt.Sprintf("> Job: `%s`\n", item.job))
-	}
+	sb.WriteString(fmt.Sprintf("> 告警对象: `%s`\n", displayName(item)))
 	if item.namespace != "" {
 		sb.WriteString(fmt.Sprintf("> 命名空间: `%s`\n", item.namespace))
 	}
-	sb.WriteString(fmt.Sprintf("> 描述: %s\n", summary))
+	sb.WriteString(fmt.Sprintf("> 描述: %s\n", displayDesc(item)))
 }
 
 // formatMultiAlert 格式化多条聚合告警
@@ -147,21 +167,13 @@ func (f *Formatter) formatMultiAlert(sb *bytes.Buffer, group alertGroup, icon, a
 	sb.WriteString(fmt.Sprintf("> 严重程度: `%s`\n", group.severity))
 	sb.WriteString("> 告警对象:\n")
 	for _, item := range group.items {
-		name := item.instance
-		if name == "" {
-			name = item.job
-		}
-		if name == "" {
-			name = "unknown"
-		}
+		name := displayName(item)
 		if item.namespace != "" {
 			name = fmt.Sprintf("%s (%s)", name, item.namespace)
 		}
 		sb.WriteString(fmt.Sprintf("> - %s\n", name))
 	}
-	if group.items[0].summary != "" {
-		sb.WriteString(fmt.Sprintf("> 描述: %s\n", group.items[0].summary))
-	}
+	sb.WriteString(fmt.Sprintf("> 描述: %s\n", displayDesc(group.items[0])))
 }
 
 // severityIcon 根据严重程度返回对应的 emoji

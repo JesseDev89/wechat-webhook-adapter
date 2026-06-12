@@ -216,12 +216,14 @@ curl -X POST http://localhost:80/webhook \
       {
         "status": "firing",
         "labels": {
-          "alertname": "HighMemoryUsage",
-          "severity": "critical",
-          "instance": "web-server-01"
+          "alertname": "KubeNodeNotReady",
+          "node": "k8s-node-02",
+          "namespace": "monitoring",
+          "severity": "warning"
         },
         "annotations": {
-          "summary": "内存使用率超过 90%"
+          "summary": "Node is not ready.",
+          "description": "k8s-node-02 has been unready for more than 15 minutes on cluster ."
         }
       }
     ],
@@ -248,17 +250,47 @@ curl -X POST http://localhost:80/webhook \
       {
         "status": "resolved",
         "labels": {
-          "alertname": "HighMemoryUsage",
-          "severity": "critical",
-          "instance": "web-server-01"
+          "alertname": "KubeDaemonSetRolloutStuck",
+          "daemonset": "calico-node",
+          "namespace": "kube-system",
+          "severity": "warning"
         },
         "annotations": {
-          "summary": "内存使用率已恢复正常"
+          "summary": "DaemonSet rollout is stuck.",
+          "description": "DaemonSet kube-system/calico-node has not finished or progressed for at least 15m on cluster ."
+        }
+      },
+      {
+        "status": "resolved",
+        "labels": {
+          "alertname": "KubeDaemonSetRolloutStuck",
+          "daemonset": "kube-proxy",
+          "namespace": "kube-system",
+          "severity": "warning"
+        },
+        "annotations": {
+          "summary": "DaemonSet rollout is stuck.",
+          "description": "DaemonSet kube-system/kube-proxy has not finished or progressed for at least 15m on cluster ."
         }
       }
     ],
     "external_url": "http://alertmanager.example.com"
   }'
+```
+
+以上请求包含两条同类告警（相同 alertname + status），会被聚合为一条消息展示：
+
+```
+✅ **Prometheus 告警恢复**
+> 时间: `2026-06-12 12:12:56`
+
+---
+🟡 **KubeDaemonSetRolloutStuck** (resolved) [2 条]
+> 严重程度: `warning`
+> 告警对象:
+> - calico-node (kube-system)
+> - kube-proxy (kube-system)
+> 描述: DaemonSet kube-system/calico-node has not finished or progressed for at least 15m on cluster .
 ```
 
 ---
@@ -281,8 +313,15 @@ curl -X POST http://localhost:80/webhook \
 - `status`: 告警状态（firing/resolved）
 - `alerts[].labels.alertname`: 告警名称
 - `alerts[].labels.severity`: 严重程度
+- `alerts[].labels.node`: 节点名（优先用于告警对象展示）
+- `alerts[].labels.daemonset`: DaemonSet 名称
 - `alerts[].labels.instance`: 实例信息
-- `alerts[].annotations.summary`: 描述信息
+- `alerts[].labels.job`: Job 名称
+- `alerts[].labels.namespace`: 命名空间
+- `alerts[].annotations.description`: 详细描述（优先使用）
+- `alerts[].annotations.summary`: 摘要描述
+
+告警对象展示优先级：`node` > `daemonset` > `instance` > `job` > `unknown`
 
 ### Q3: 如何在 K8s 中调试？
 

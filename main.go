@@ -17,6 +17,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	h := handler.New(cfg)
+	defer h.Shutdown()
 	h.RegisterRoutes(mux)
 
 	addr := ":" + cfg.Port
