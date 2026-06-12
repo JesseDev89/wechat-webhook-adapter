@@ -22,7 +22,7 @@ set -euo pipefail
 # ==================== 可配置变量 ====================
 REGISTRY="${REGISTRY:-registry.cn-guangzhou.aliyuncs.com}"                          # 镜像仓库地址，如 registry.example.com
 IMAGE_NAME="jesse-dnmp/wechat-webhook-adapter"
-IMAGE_TAG="${IMAGE_TAG:-v1.0.0}"
+IMAGE_TAG="${IMAGE_TAG:-v1.0.0-arm64}"
 DOCKERFILE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ==================== 颜色输出 ====================
@@ -53,7 +53,7 @@ set -euo pipefail
 
 # ==================== 可配置变量 ====================
 REGISTRY="${REGISTRY:-registry.cn-guangzhou.aliyuncs.com}"                          # 镜像仓库地址，如 registry.example.com
-IMAGE_NAME="jesse-dnmp/wechat-webhook-adapter"
+IMAGE_NAME="jessedev/wechat-webhook-adapter"
 IMAGE_TAG="${IMAGE_TAG:-v1.0.0}"
 DOCKERFILE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -142,8 +142,6 @@ main() {
             ;;
     esac
 }
-
-main "$@"
 
 log_info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
