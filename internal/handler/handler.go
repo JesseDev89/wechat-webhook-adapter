@@ -70,6 +70,10 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 打印原始请求内容
+	requestBody, _ := json.MarshalIndent(payload, "", "  ")
+	log.Printf("接收到的请求内容: %s", string(requestBody))
+
 	log.Printf("接收到告警信息: status=%s, alerts=%d", payload.Status, len(payload.Alerts))
 
 	if err := h.CanSend(); err != nil {
