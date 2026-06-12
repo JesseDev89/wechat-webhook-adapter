@@ -65,6 +65,13 @@ route:
       group_wait: 10s
       repeat_interval: 1h
     
+    # KubeNodeUnreachable 告警 - 高优先级
+    - matchers:
+        - alertname = "KubeNodeUnreachable"
+      receiver: 'wechat-critical'
+      group_wait: 10s
+      repeat_interval: 1h
+    
     # Critical 级别告警 - 立即通知，高优先级处理
     - matchers:
         - severity =~ "critical|Critical|CRITICAL"
