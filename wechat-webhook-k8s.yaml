@@ -19,10 +19,10 @@
 #   1. 修改 WECHAT_WEBHOOK_KEY 环境变量为你的机器人 Key
 #   2. 修改 image 为你的镜像地址
 #   3. kubectl apply -f wechat-webhook-k8s.yaml
-#   4. 配置 Alertmanager webhook 指向 http://wechat-webhook:80/webhook
+#   4. 配置 Alertmanager webhook 指向 http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook
 #
 # 验证方式:
-#   curl -X POST http://wechat-webhook:80/webhook \
+#   curl -X POST http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook \
 #     -H "Content-Type: application/json" \
 #     -d '{"status":"firing","alerts":[{"labels":{"alertname":"Test","severity":"warning","instance":"test-01"},"annotations":{"summary":"测试告警"}}]}'
 # ============================================================================

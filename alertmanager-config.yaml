@@ -8,27 +8,35 @@
 # 使用方法:
 #   1. 修改 alertmanager-config.yaml 中的配置
 #   2. 通过 Secret 更新 Alertmanager 配置:
-#      kubectl create secret generic alertmanager-prometheus-kube-prometheus-alertmanager \
-#        --from-file=alertmanager.yaml=alertmanager-config.yaml \
-#        -n monitoring --dry-run=client -o yaml | kubectl apply -f -
-#   3. 等待 Alertmanager Pod 重启生效
+#      kubectl create secret generic alertmanager-prometheus-kube-prometheus-alertmanager --from-file=alertmanager.yaml=alertmanager-config.yaml -n monitoring --dry-run=client -o yaml | kubectl apply -f -
+#   3. 重启 Alertmanager 使其生效:
+#      kubectl rollout restart statefulset/alertmanager-prometheus-kube-prometheus-alertmanager -n monitoring
+#
+# 验证配置:
+#   # 查看 Alertmanager Pod 是否重启
+#   kubectl get pod -n monitoring -l app.kubernetes.io/name=alertmanager
+#
+#   # 查看 Alertmanager 日志
+#   kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager --tail=50
+#
+# 测试告警:
+#   curl -X POST http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook \
+#     -H "Content-Type: application/json" \
+#     -d '{"status":"firing","alerts":[{"labels":{"alertname":"Test","severity":"warning","instance":"test-01"},"annotations":{"summary":"测试告警"}}}]
 # ============================================================================
 
 global:
   # 告警恢复等待时间
   resolve_timeout: 5m
-  # 默认告警模板（可选，保持默认即可）
-  smtp_smarthost: 'localhost:25'
-  smtp_from: 'alertmanager@example.com'
 
 # ==================== 路由配置 ====================
 # 路由定义了告警的分发规则
 route:
   # 默认接收器
-  receiver: 'wechat-default'
+  receiver: 'wechat-webhook'
 
   # 按这些标签分组告警
-  group_by: ['alertname', 'severity', 'namespace']
+  group_by: [ 'alertname', 'severity', 'namespace' ]
 
   # 组等待时间：等待多久开始发送（让同一批告警聚合）
   group_wait: 30s
@@ -39,21 +47,9 @@ route:
   # 重复告警间隔：相同告警再次发送的间隔
   repeat_interval: 4h
 
-  # 子路由：可以根据条件路由到不同接收器
+  # 子路由：根据 severity 路由到不同接收器
   routes:
-    # Critical 级别告警：立即发送到企业微信
-    - match:
-        severity: critical
-      receiver: 'wechat-critical'
-      continue: true
-
-    # Warning 级别告警：发送到企业微信
-    - match:
-        severity: warning
-      receiver: 'wechat-warning'
-      continue: true
-
-    # Info 级别告警：仅记录，不发送
+    # Info 级别告警：不发送
     - match:
         severity: info
       receiver: 'null'
@@ -65,32 +61,25 @@ inhibit_rules:
       severity: 'critical'
     target_match:
       severity: 'warning'
-    equal: ['alertname', 'instance']
+    equal: [ 'alertname', 'instance' ]
 
 # ==================== 接收器配置 ====================
 receivers:
-  # 默认接收器 - 企业微信机器人
-  - name: 'wechat-default'
+  # 企业微信机器人
+  - name: 'wechat-webhook'
     webhook_configs:
-      - url: 'http://wechat-webhook:80/webhook'
+      - url: 'http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook'
         send_resolved: true  # 告警恢复时也发送通知
-
   # Critical 告警接收器
   - name: 'wechat-critical'
     webhook_configs:
-      - url: 'http://wechat-webhook:80/webhook'
+      - url: 'http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook'
         send_resolved: true
 
   # Warning 告警接收器
   - name: 'wechat-warning'
     webhook_configs:
-      - url: 'http://wechat-webhook:80/webhook'
+      - url: 'http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook'
         send_resolved: true
-
   # 空接收器 - 用于忽略某些告警
   - name: 'null'
-
-# ==================== 模板配置（可选） ====================
-# 自定义告警模板
-# templates:
-#   - '/etc/alertmanager/templates/*.tmpl'
