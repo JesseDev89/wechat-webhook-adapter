@@ -96,7 +96,7 @@ docker build -t wechat-webhook-adapter .
 docker run -d \
   -p 80:80 \
   -e WECHAT_WEBHOOK_KEY="your-robot-key" \
-  registry.cn-guangzhou.aliyuncs.com/jesse-dnmp/wechat-webhook-adapter:v1.0.0
+  registry.cn-guangzhou.aliyuncs.com/jessedev/wechat-webhook-adapter:v1.0.0
 ```
 
 ### 4. Kubernetes 部署
