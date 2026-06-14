@@ -1,17 +1,23 @@
 # ============================================================================
 # 生产级 Prometheus 告警规则配置
 # ============================================================================
-# 用途: 包含生产环境中常用的各类监控告警规则
-# 部署方式:
-#   1. 将此文件保存为 ConfigMap 或 Secret
-#   2. 在 Prometheus 或 Prometheus Operator 中引用此规则文件
+# 用途: 涵盖生产环境各类核心监控场景
+# 部署方式 (Prometheus Operator):
+#   kubectl apply -f prometheus-rules.yaml -n monitoring
+#
+# 部署方式 (ConfigMap):
+#   kubectl create configmap prometheus-rules --from-file=prometheus-rules.yaml -n monitoring --dry-run=client -o yaml | kubectl apply -f -
+#
+# 验证规则:
+#   promtool check rules prometheus-rules.yaml
 # ============================================================================
 
 groups:
-  # 节点监控告警组
+  # ==================== 节点监控告警组 ====================
   - name: node.rules
+    interval: 30s
     rules:
-      # 节点宕机告警
+      # 节点宕机告警 - 最高优先级
       - alert: NodeDown
         expr: up{job="node-exporter"} == 0
         for: 2m
@@ -19,62 +25,165 @@ groups:
           severity: critical
         annotations:
           summary: "节点 {{ $labels.instance }} 已宕机"
-          description: "节点 {{ $labels.instance }} 已持续 2 分钟无法连接，请立即检查"
-      
-      # CPU使用率过高告警
+          description: "节点 {{ $labels.instance }} 持续 2 分钟无法连接，请立即检查主机状态和网络连通性"
+          runbook_url: "https://runbooks.example.com/alerts/NodeDown"
+
+      # CPU 使用率过高告警（排除 iowait 和中断时间）
       - alert: HighCpuUsage
-        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
-        for: 5m
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
         labels:
           severity: warning
         annotations:
           summary: "节点 {{ $labels.instance }} CPU 使用率过高"
-          description: "节点 {{ $labels.instance }} CPU 使用率持续 5 分钟超过 85%，当前值: {{ $value | printf \"%.2f\" }}%"
-      
+          description: "节点 {{ $labels.instance }} CPU 使用率持续 10 分钟超过 85%，当前值: {{ $value | printf \"%.1f\" }}%"
+
+      # CPU 使用率严重过高（接近满载）
+      - alert: HighCpuUsageCritical
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "节点 {{ $labels.instance }} CPU 严重过载"
+          description: "节点 {{ $labels.instance }} CPU 使用率持续 5 分钟超过 95%，当前值: {{ $value | printf \"%.1f\" }}%，可能导致服务不可用"
+
       # 内存使用率过高告警
       - alert: HighMemoryUsage
-        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
-        for: 5m
+        expr: |
+          (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)
+          / node_memory_MemTotal_bytes * 100 > 85
+        for: 10m
         labels:
           severity: warning
         annotations:
           summary: "节点 {{ $labels.instance }} 内存使用率过高"
-          description: "节点 {{ $labels.instance }} 内存使用率持续 5 分钟超过 85%，当前值: {{ $value | printf \"%.2f\" }}%"
-      
-      # 磁盘空间不足告警
-      - alert: DiskSpaceLow
-        expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes * 100 > 85
+          description: "节点 {{ $labels.instance }} 内存使用率持续 10 分钟超过 85%，当前值: {{ $value | printf \"%.1f\" }}%"
+
+      # 内存严重不足
+      - alert: HighMemoryUsageCritical
+        expr: |
+          (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)
+          / node_memory_MemTotal_bytes * 100 > 95
         for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "节点 {{ $labels.instance }} 内存严重不足"
+          description: "节点 {{ $labels.instance }} 内存使用率持续 5 分钟超过 95%，当前值: {{ $value | printf \"%.1f\" }}%，即将触发 OOM"
+
+      # 磁盘空间不足告警（排除虚拟文件系统和只读挂载）
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay",mountpoint!~"/run.*|/snap.*|/sys.*|/proc.*"}
+          - node_filesystem_free_bytes{fstype!~"tmpfs|squashfs|overlay",mountpoint!~"/run.*|/snap.*|/sys.*|/proc.*"})
+          / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay",mountpoint!~"/run.*|/snap.*|/sys.*|/proc.*"} * 100 > 85
+        for: 10m
         labels:
           severity: warning
         annotations:
           summary: "节点 {{ $labels.instance }} 磁盘空间不足"
-          description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 使用率超过 85%，当前值: {{ $value | printf \"%.2f\" }}%"
-      
-      # 磁盘IO过高告警
-      - alert: HighDiskIo
-        expr: rate(node_disk_io_time_seconds_total[5m]) > 0.8
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "节点 {{ $labels.instance }} 磁盘IO过高"
-          description: "节点 {{ $labels.instance }} 磁盘IO使用率过高，当前值: {{ $value | printf \"%.2f\" }}%"
-      
-      # 网络带宽使用过高告警
-      - alert: HighNetworkUsage
-        expr: rate(node_network_receive_bytes_total[5m]) / node_network_speed_bytes * 100 > 80
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "节点 {{ $labels.instance }} 网络带宽使用过高"
-          description: "节点 {{ $labels.instance }} 网络带宽使用率超过 80%，当前值: {{ $value | printf \"%.2f\" }}%"
+          description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} ({{ $labels.fstype }}) 使用率超过 85%，当前值: {{ $value | printf \"%.1f\" }}%"
 
-  # Kubernetes 集群监控告警组
+      # 磁盘空间严重不足
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay",mountpoint!~"/run.*|/snap.*|/sys.*|/proc.*"}
+          - node_filesystem_free_bytes{fstype!~"tmpfs|squashfs|overlay",mountpoint!~"/run.*|/snap.*|/sys.*|/proc.*"})
+          / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay",mountpoint!~"/run.*|/snap.*|/sys.*|/proc.*"} * 100 > 95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "节点 {{ $labels.instance }} 磁盘空间即将耗尽"
+          description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 使用率超过 95%，当前值: {{ $value | printf \"%.1f\" }}%，请立即清理或扩容"
+
+      # 磁盘将在 4 小时内写满（基于趋势预测）
+      - alert: DiskSpaceFillingUp
+        expr: |
+          predict_linear(
+            node_filesystem_free_bytes{fstype!~"tmpfs|squashfs|overlay",mountpoint!~"/run.*|/snap.*|/sys.*|/proc.*"}[6h],
+            4 * 3600
+          ) < 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点 {{ $labels.instance }} 磁盘预计 4 小时内写满"
+          description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 按当前写入速率预计 4 小时内耗尽空间"
+
+      # 磁盘 IO 使用率过高
+      - alert: HighDiskIo
+        expr: rate(node_disk_io_time_seconds_total[5m]) > 0.85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点 {{ $labels.instance }} 磁盘 IO 过高"
+          description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.device }} IO 使用率持续 15 分钟超过 85%，当前值: {{ $value | printf \"%.1f\" }}%"
+
+      # 网络丢包率过高
+      - alert: HighNetworkPacketLoss
+        expr: |
+          rate(node_network_receive_drop_total{device!~"lo|veth.*|docker.*|br-.*|cali.*|flannel.*"}[5m])
+          / rate(node_network_receive_packets_total{device!~"lo|veth.*|docker.*|br-.*|cali.*|flannel.*"}[5m]) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点 {{ $labels.instance }} 网络丢包率过高"
+          description: "节点 {{ $labels.instance }} 网卡 {{ $labels.device }} 丢包率超过 1%，当前值: {{ $value | printf \"%.2f\" }}%"
+
+      # 网络接口进入错误状态
+      - alert: NetworkInterfaceDown
+        expr: |
+          node_network_up{device!~"lo|veth.*|docker.*|br-.*|cali.*|flannel.*"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "节点 {{ $labels.instance }} 网卡 {{ $labels.device }} 断开"
+          description: "节点 {{ $labels.instance }} 网卡 {{ $labels.device }} 持续 3 分钟处于 down 状态"
+
+      # 系统负载过高
+      - alert: HighSystemLoad
+        expr: |
+          node_load1 / count by(instance) (node_cpu_seconds_total{mode="idle"}) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点 {{ $labels.instance }} 系统负载过高"
+          description: "节点 {{ $labels.instance }} 1 分钟负载与 CPU 核心数比值超过 1.5，当前值: {{ $value | printf \"%.2f\" }}"
+
+      # 文件描述符即将耗尽
+      - alert: HighFileDescriptorUsage
+        expr: |
+          node_filefd_allocated / node_filefd_maximum * 100 > 75
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点 {{ $labels.instance }} 文件描述符使用率过高"
+          description: "节点 {{ $labels.instance }} 文件描述符使用率超过 75%，当前值: {{ $value | printf \"%.1f\" }}%"
+
+      # NTP 时钟偏差过大
+      - alert: ClockDrift
+        expr: abs(node_timex_offset_seconds) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点 {{ $labels.instance }} 时钟偏差过大"
+          description: "节点 {{ $labels.instance }} 时钟偏差超过 50ms，当前值: {{ $value | printf \"%.3f\" }}s，可能影响分布式系统一致性"
+
+  # ==================== Kubernetes 集群监控告警组 ====================
   - name: kubernetes.rules
+    interval: 30s
     rules:
-      # 节点未就绪告警
+      # 节点未就绪告警 - 高优先级
       - alert: KubeNodeNotReady
         expr: kube_node_status_condition{condition="Ready",status="true"} == 0
         for: 5m
@@ -82,159 +191,121 @@ groups:
           severity: critical
         annotations:
           summary: "Kubernetes 节点 {{ $labels.node }} 未就绪"
-          description: "Kubernetes 节点 {{ $labels.node }} 持续 5 分钟未就绪"
-      
-      # Pod 崩溃循环告警
+          description: "Kubernetes 节点 {{ $labels.node }} 持续 5 分钟未就绪，该节点上的 Pod 可能无法正常工作"
+
+      # 节点存在资源压力
+      - alert: KubeNodeResourcePressure
+        expr: |
+          kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure",status="true"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "节点 {{ $labels.node }} 存在 {{ $labels.condition }} 压力"
+          description: "Kubernetes 节点 {{ $labels.node }} 持续 5 分钟处于 {{ $labels.condition }} 状态"
+
+      # Pod 崩溃循环告警（15 分钟内重启超过 3 次）
       - alert: KubePodCrashLooping
-        expr: rate(kube_pod_container_status_restarts_total[15m]) > 0
-        for: 10m
+        expr: |
+          increase(kube_pod_container_status_restarts_total[15m]) > 3
+        for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 循环崩溃"
-          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 在最近 15 分钟内持续重启"
-      
-      # Pod 无法调度告警
+          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 在最近 15 分钟内重启超过 3 次，请检查容器日志"
+
+      # Pod 持续未就绪
       - alert: KubePodNotReady
-        expr: sum by(namespace, pod) (kube_pod_status_phase{phase=~"Pending|Failed"}) > 0
-        for: 10m
+        expr: |
+          sum by(namespace, pod) (kube_pod_status_phase{phase=~"Pending|Failed"}) > 0
+        for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 未就绪"
-          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 持续 10 分钟未就绪"
-      
-      # 集群内存压力告警
-      - alert: KubeMemoryPressure
-        expr: avg(kube_node_status_condition{condition="MemoryPressure",status="true"}) > 0.5
-        for: 10m
-        labels:
-          severity: critical
-        annotations:
-          summary: "集群存在内存压力"
-          description: "超过 50% 的节点存在内存压力"
-      
-      # 集群磁盘压力告警
-      - alert: KubeDiskPressure
-        expr: avg(kube_node_status_condition{condition="DiskPressure",status="true"}) > 0.5
-        for: 10m
-        labels:
-          severity: critical
-        annotations:
-          summary: "集群存在磁盘压力"
-          description: "超过 50% 的节点存在磁盘压力"
-      
-      # 集群PID压力告警
-      - alert: KubePIDPressure
-        expr: avg(kube_node_status_condition{condition="PIDPressure",status="true"}) > 0.5
-        for: 10m
-        labels:
-          severity: critical
-        annotations:
-          summary: "集群存在PID压力"
-          description: "超过 50% 的节点存在PID压力"
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 持续未就绪"
+          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 持续 15 分钟处于非 Running 状态"
 
-  # 应用服务监控告警组
-  - name: service.rules
-    rules:
-      # 服务宕机告警
-      - alert: ServiceDown
-        expr: up == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "服务 {{ $labels.job }}/{{ $labels.instance }} 已宕机"
-          description: "服务 {{ $labels.job }}/{{ $labels.instance }} 已持续 2 分钟无法访问"
-      
-      # HTTP 请求错误率过高
-      - alert: HighHttpErrorRate
-        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "HTTP 5xx 错误率过高"
-          description: "服务 {{ $labels.service }} HTTP 5xx 错误率超过 5%，当前值: {{ $value | printf \"%.2f\" }}%"
-      
-      # HTTP 响应时间过长
-      - alert: HighHttpResponseTime
-        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
-        for: 5m
+      # Pod OOMKilled
+      - alert: KubePodOOMKilled
+        expr: |
+          kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+        for: 0m
         labels:
           severity: warning
         annotations:
-          summary: "HTTP 响应时间过长"
-          description: "服务 {{ $labels.service }} 95% 的请求响应时间超过 2 秒，当前值: {{ $value | printf \"%.2f\" }}s"
-      
-      # 服务资源使用过高
-      - alert: ServiceHighResourceUsage
-        expr: (rate(container_cpu_usage_seconds_total[5m]) / container_spec_cpu_quota) * 100 > 85
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "服务 {{ $labels.pod_name }} CPU 使用率过高"
-          description: "容器 {{ $labels.pod_name }} CPU 使用率超过 85%，当前值: {{ $value | printf \"%.2f\" }}%"
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 容器 OOMKilled"
+          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 容器 {{ $labels.container }} 因内存不足被 OOMKill，请增大内存 limit"
 
-  # 存储监控告警组
-  - name: storage.rules
-    rules:
-      # 持久卷使用率过高
-      - alert: KubePersistentVolumeUsageHigh
-        expr: kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes * 100 > 85
-        for: 5m
+      # Deployment 副本数不匹配
+      - alert: KubeDeploymentReplicasMismatch
+        expr: |
+          kube_deployment_spec_replicas != kube_deployment_status_replicas_available
+        for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "持久卷 {{ $labels.persistentvolumeclaim }} 使用率过高"
-          description: "命名空间 {{ $labels.namespace }} 中的持久卷 {{ $labels.persistentvolumeclaim }} 使用率超过 85%，当前值: {{ $value | printf \"%.2f\" }}%"
-      
-      # 持久卷即将充满
-      - alert: KubePersistentVolumeFullInFourDays
-        expr: predict_linear(kubelet_volume_stats_available_bytes[1d], 4 * 24 * 3600) < 0
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "持久卷 {{ $labels.persistentvolumeclaim }} 预计将在 4 天内充满"
-          description: "命名空间 {{ $labels.namespace }} 中的持久卷 {{ $labels.persistentvolumeclaim }} 预计将在 4 天内充满"
-      
-      # 存储设备故障
-      - alert: StorageDeviceFailure
-        expr: node_disk_read_errors_total > 0 or node_disk_write_errors_total > 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "存储设备 {{ $labels.device }} 出现读写错误"
-          description: "节点 {{ $labels.instance }} 上的存储设备 {{ $labels.device }} 出现读写错误"
+          summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} 副本数不匹配"
+          description: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} 期望 {{ $value }} 个副本，但可用副本数不足，持续 15 分钟"
 
-  # 网络监控告警组
-  - name: network.rules
-    rules:
-      # 网络丢包率过高
-      - alert: HighNetworkPacketLoss
-        expr: rate(node_network_receive_drop_total[5m]) / rate(node_network_receive_packets_total[5m]) > 0.01
-        for: 5m
+      # StatefulSet 副本数不匹配
+      - alert: KubeStatefulSetReplicasMismatch
+        expr: |
+          kube_statefulset_status_replicas_ready != kube_statefulset_status_replicas
+        for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "节点 {{ $labels.instance }} 网络丢包率过高"
-          description: "节点 {{ $labels.instance }} 网络接口 {{ $labels.device }} 丢包率超过 1%，当前值: {{ $value | printf \"%.2f\" }}%"
-      
-      # DNS 解析失败
-      - alert: DnsResolutionFailure
-        expr: rate(node_dns_resolution_failure_count[5m]) > 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "DNS 解析失败"
-          description: "节点 {{ $labels.instance }} DNS 解析失败次数增加"
+          summary: "StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} 副本数不匹配"
+          description: "StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} 就绪副本数与期望不一致，持续 15 分钟"
 
-  # 集群健康状态告警组
-  - name: cluster-health.rules
+      # DaemonSet 未在所有节点运行
+      - alert: KubeDaemonSetRolloutStuck
+        expr: |
+          kube_daemonset_status_number_ready
+          / kube_daemonset_status_desired_number_scheduled * 100 < 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} 部署未完成"
+          description: "DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} 持续 15 分钟未在所有节点就绪，当前就绪比例: {{ $value | printf \"%.1f\" }}%"
+
+      # Job 执行失败
+      - alert: KubeJobFailed
+        expr: kube_job_status_failed > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }} 执行失败"
+          description: "命名空间 {{ $labels.namespace }} 中的 Job {{ $labels.job_name }} 执行失败，请检查日志"
+
+      # HPA 达到最大副本数
+      - alert: KubeHPAMaxedOut
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas
+          == kube_horizontalpodautoscaler_spec_max_replicas
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} 已达到最大副本数"
+          description: "HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} 已达到最大副本数上限 {{ $value }}，持续 15 分钟，可能需要扩容上限或优化服务"
+
+      # CronJob 未按时执行
+      - alert: KubeCronJobSuspended
+        expr: kube_cronjob_status_active == 0 and kube_cronjob_spec_suspend == 1
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} 已挂起"
+          description: "CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} 已挂起超过 1 小时，请确认是否符合预期"
+
+  # ==================== 控制平面监控告警组 ====================
+  - name: control-plane.rules
+    interval: 30s
     rules:
       # 控制平面组件宕机
       - alert: KubeComponentDown
@@ -243,25 +314,277 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Kubernetes 控制平面组件 {{ $labels.job }}/{{ $labels.instance }} 已宕机"
-          description: "Kubernetes 控制平面组件 {{ $labels.job }}/{{ $labels.instance }} 已持续 2 分钟无法访问"
-      
+          summary: "控制平面组件 {{ $labels.job }} 已宕机"
+          description: "Kubernetes 控制平面组件 {{ $labels.job }}/{{ $labels.instance }} 持续 2 分钟无法访问，集群可能不可用"
+
       # API Server 延迟过高
       - alert: KubeAPILatencyHigh
-        expr: histogram_quantile(0.99, apiserver_request_duration_seconds_bucket{verb!~"WATCH|CONNECT"}) > 1
+        expr: |
+          histogram_quantile(0.99,
+            sum by(le, resource, verb) (rate(apiserver_request_duration_seconds_bucket{verb!~"WATCH|CONNECT|LIST"}[5m]))
+          ) > 1
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "API Server 延迟过高"
-          description: "API Server 99% 的请求延迟超过 1 秒，当前值: {{ $value | printf \"%.2f\" }}s"
-      
+          summary: "API Server 请求延迟过高"
+          description: "API Server {{ $labels.verb }} {{ $labels.resource }} 请求 P99 延迟超过 1 秒，当前值: {{ $value | printf \"%.2f\" }}s"
+
       # API Server 错误率过高
       - alert: KubeAPIErrorsHigh
-        expr: rate(apiserver_request_total{code=~"5.."}[5m]) / rate(apiserver_request_total[5m]) > 0.03
+        expr: |
+          sum by(verb) (rate(apiserver_request_total{code=~"5.."}[5m]))
+          / sum by(verb) (rate(apiserver_request_total[5m])) > 0.03
         for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "API Server 错误率过高"
-          description: "API Server 错误率超过 3%，当前值: {{ $value | printf \"%.2f\" }}%"
+          summary: "API Server {{ $labels.verb }} 请求错误率过高"
+          description: "API Server {{ $labels.verb }} 请求错误率超过 3%，当前值: {{ $value | printf \"%.2f\" }}%"
+
+      # etcd 成员不可用
+      - alert: EtcdMembersDown
+        expr: |
+          max by(cluster) (
+            sum by(cluster, member) (etcd_server_has_leader{job=~".*etcd.*"}) == 0
+          )
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "etcd 集群成员不可用"
+          description: "etcd 集群存在无 leader 的成员，持续 3 分钟，集群一致性可能受影响"
+
+      # etcd 高 fsync 延迟
+      - alert: EtcdHighFsyncDuration
+        expr: |
+          histogram_quantile(0.99,
+            rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m])
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "etcd WAL fsync 延迟过高"
+          description: "etcd WAL fsync P99 延迟超过 10ms，当前值: {{ $value | printf \"%.3f\" }}s，磁盘性能可能不足"
+
+      # etcd 数据库空间即将耗尽
+      - alert: EtcdDatabaseSpaceLow
+        expr: |
+          etcd_mvcc_db_total_size_in_bytes / etcd_server_quota_backend_bytes * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "etcd 数据库空间使用率过高"
+          description: "etcd 数据库空间使用率超过 80%，当前值: {{ $value | printf \"%.1f\" }}%，请及时压缩或扩容"
+
+      # K8s 证书即将过期（30 天内）
+      - alert: KubeCertWillExpireSoon
+        expr: |
+          apiserver_client_certificate_expiration_seconds < 30 * 24 * 3600
+          and apiserver_client_certificate_expiration_seconds > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kubernetes 客户端证书将在 30 天内过期"
+          description: "Kubernetes API Server 客户端证书将在 {{ $value | humanizeDuration }} 后过期，请及时轮换证书"
+
+      # K8s 证书即将过期（7 天内 - 紧急）
+      - alert: KubeCertWillExpireCritical
+        expr: |
+          apiserver_client_certificate_expiration_seconds < 7 * 24 * 3600
+          and apiserver_client_certificate_expiration_seconds > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kubernetes 证书将在 7 天内过期！"
+          description: "Kubernetes API Server 证书将在 {{ $value | humanizeDuration }} 后过期，请立即轮换证书，否则集群将不可用"
+
+  # ==================== 应用服务监控告警组 ====================
+  - name: service.rules
+    interval: 30s
+    rules:
+      # 服务宕机告警（排除 node-exporter，避免与 NodeDown 重复）
+      - alert: ServiceDown
+        expr: up{job!="node-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "服务 {{ $labels.job }}/{{ $labels.instance }} 已宕机"
+          description: "服务 {{ $labels.job }}/{{ $labels.instance }} 持续 2 分钟无法访问"
+
+      # HTTP 请求错误率过高（5xx 超过 5%）
+      - alert: HighHttpErrorRate
+        expr: |
+          (
+            sum by(namespace, service) (rate(http_requests_total{status=~"5.."}[5m]))
+            / sum by(namespace, service) (rate(http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "服务 {{ $labels.namespace }}/{{ $labels.service }} HTTP 5xx 错误率过高"
+          description: "HTTP 5xx 错误率超过 5%，当前值: {{ $value | printf \"%.2f\" }}%"
+
+      # HTTP 响应时间过长
+      - alert: HighHttpResponseTime
+        expr: |
+          histogram_quantile(0.95,
+            sum by(le, namespace, service) (rate(http_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "服务 {{ $labels.namespace }}/{{ $labels.service }} HTTP 响应时间过长"
+          description: "P95 请求响应时间超过 2 秒，当前值: {{ $value | printf \"%.2f\" }}s"
+
+      # 容器 CPU 使用率过高（相对于 limit）
+      - alert: ContainerCpuThrottling
+        expr: |
+          sum by(namespace, pod, container) (
+            rate(container_cpu_cfs_throttled_seconds_total{container!=""}[5m])
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "容器 {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} CPU 被严重限流"
+          description: "容器 CPU CFS 限流时间占比超过 25%，当前值: {{ $value | printf \"%.1f\" }}%，建议增大 CPU limit"
+
+      # 容器内存接近 limit（可能 OOMKill）
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          container_memory_working_set_bytes{container!=""}
+          / container_spec_memory_limit_bytes{container!=""} * 100 > 90
+          and container_spec_memory_limit_bytes{container!=""} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "容器 {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} 内存接近 limit"
+          description: "容器内存使用量已达 limit 的 90% 以上，当前值: {{ $value | printf \"%.1f\" }}%，即将触发 OOMKill"
+
+  # ==================== 存储监控告警组 ====================
+  - name: storage.rules
+    interval: 30s
+    rules:
+      # 持久卷使用率过高
+      - alert: KubePersistentVolumeUsageHigh
+        expr: |
+          kubelet_volume_stats_used_bytes
+          / kubelet_volume_stats_capacity_bytes * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PV {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} 使用率过高"
+          description: "持久卷 {{ $labels.persistentvolumeclaim }} 使用率超过 85%，当前值: {{ $value | printf \"%.1f\" }}%"
+
+      # 持久卷即将充满（基于 1 天趋势预测 4 天）
+      - alert: KubePersistentVolumeFullInFourDays
+        expr: |
+          predict_linear(kubelet_volume_stats_available_bytes[1d], 4 * 24 * 3600) < 0
+          and kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes < 0.5
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PV {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} 预计 4 天内充满"
+          description: "持久卷 {{ $labels.persistentvolumeclaim }} 按当前写入速率预计 4 天内耗尽空间，请扩容或清理数据"
+
+      # PVC 处于 Lost 状态
+      - alert: KubePersistentVolumeClaimLost
+        expr: kube_persistentvolumeclaim_status_phase{phase="Lost"} == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} 处于 Lost 状态"
+          description: "PVC {{ $labels.persistentvolumeclaim }} 已丢失底层 PV 绑定，数据可能已丢失"
+
+  # ==================== 监控系统自身健康告警组 ====================
+  - name: monitoring-self.rules
+    interval: 30s
+    rules:
+      # Prometheus 配置加载失败
+      - alert: PrometheusConfigReloadFailure
+        expr: prometheus_config_last_reload_successful == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus 配置加载失败"
+          description: "Prometheus 实例 {{ $labels.instance }} 最近一次配置重载失败，请检查配置语法"
+
+      # Prometheus 通知发送失败
+      - alert: PrometheusNotificationFailures
+        expr: |
+          rate(prometheus_notifications_errors_total[5m])
+          / rate(prometheus_notifications_sent_total[5m]) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus 告警通知发送失败率过高"
+          description: "Prometheus 发送到 Alertmanager {{ $labels.alertmanager }} 的通知失败率超过 5%"
+
+      # Prometheus 规则评估失败
+      - alert: PrometheusRuleEvaluationFailures
+        expr: |
+          increase(prometheus_rule_evaluation_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus 规则评估失败"
+          description: "规则组 {{ $labels.rule_group }} 评估失败，请检查规则表达式语法"
+
+      # Prometheus 规则评估耗时过长
+      - alert: PrometheusRuleEvaluationSlow
+        expr: |
+          prometheus_rule_group_last_duration_seconds
+          > prometheus_rule_group_interval_seconds
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus 规则组评估耗时超过间隔"
+          description: "规则组 {{ $labels.rule_group }} 评估耗时超过其执行间隔，可能导致告警延迟"
+
+      # Alertmanager 通知失败
+      - alert: AlertmanagerNotificationsFailing
+        expr: |
+          rate(alertmanager_notifications_failed_total[5m])
+          / rate(alertmanager_notifications_total[5m]) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager 通知发送失败率过高"
+          description: "Alertmanager 向 {{ $labels.integration }} 发送通知的失败率超过 5%"
+
+      # kube-state-metrics 不可用
+      - alert: KubeStateMetricsDown
+        expr: up{job="kube-state-metrics"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "kube-state-metrics 不可用"
+          description: "kube-state-metrics 持续 5 分钟不可用，大量 Kubernetes 对象状态告警将失效"
+
+      # CoreDNS 不可用
+      - alert: CoreDNSDown
+        expr: up{job="kube-dns"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CoreDNS 不可用"
+          description: "CoreDNS 实例 {{ $labels.instance }} 持续 2 分钟不可用，集群内 DNS 解析将受影响"

@@ -1,65 +1,97 @@
 # ============================================================================
 # 企业微信机器人 Webhook 中转服务 - Kubernetes 部署配置 (Go 版本)
 # ============================================================================
+#
 # 前置条件:
 #   1. 已创建企业微信群机器人并获取 Key
 #      获取方式: 群聊 -> 群设置 -> 添加群机器人 -> 复制 Webhook 地址
 #   2. 已构建镜像并推送到镜像仓库 (或本地导入)
 #
-# 构建镜像:
-#   # 方式一: 有远程镜像仓库
-#   REGISTRY=your-registry.com/jesse ./build.sh
+# 部署:
+#   kubectl apply -f wechat-webhook-k8s.yaml
 #
-#   # 方式二: 本地构建后导入 (离线环境)
-#   ./build.sh save
-#   docker load -i wechat-webhook-v1.0.0.tar
-#   # 然后修改下方 image 为本地镜像名
+# 验证:
+#   # 检查 Pod 状态
+#   kubectl get pod -n monitoring -l app.kubernetes.io/name=wechat-webhook
 #
-# 使用方法:
-#   1. 修改 WECHAT_WEBHOOK_KEY 环境变量为你的机器人 Key
-#   2. 修改 image 为你的镜像地址
-#   3. kubectl apply -f wechat-webhook-k8s.yaml
-#   4. 配置 Alertmanager webhook 指向 http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook
-#
-# 验证方式:
-#   curl -X POST http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook \
+#   # 测试告警推送
+#   kubectl port-forward -n monitoring svc/wechat-webhook-adapter 8080:80
+#   curl -X POST http://localhost:8080/webhook \
 #     -H "Content-Type: application/json" \
-#     -d '{"status":"firing","alerts":[{"labels":{"alertname":"Test","severity":"warning","instance":"test-01"},"annotations":{"summary":"测试告警"}}]}'
+#     -d '{"status":"firing","alerts":[{"labels":{"alertname":"Test","severity":"warning","instance":"test-01"},"annotations":{"summary":"测试告警","description":"这是一条测试告警"}}]}'
+#
+# Alertmanager 对接地址:
+#   http://wechat-webhook-adapter.monitoring.svc.cluster.local:80/webhook
 # ============================================================================
 
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: wechat-webhook-adapter
   namespace: monitoring
   labels:
-    app: wechat-webhook
+    app.kubernetes.io/name: wechat-webhook
+    app.kubernetes.io/component: webhook-adapter
+    app.kubernetes.io/version: v1.0.0
 spec:
-  replicas: 1
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
-      app: wechat-webhook
+      app.kubernetes.io/name: wechat-webhook
   template:
     metadata:
       labels:
-        app: wechat-webhook
+        app.kubernetes.io/name: wechat-webhook
+        app.kubernetes.io/component: webhook-adapter
+        app.kubernetes.io/version: v1.0.0
     spec:
+      automountServiceAccountToken: false
+
+      # 安全上下文：非 root 运行、只读根文件系统
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534        # nobody
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
         - name: wechat-webhook
-          # ==================== 修改为你的镜像地址 ====================
-          # 本地构建: wechat-webhook:v1.0.0
-          # 远程仓库: your-registry.com/jesse/wechat-webhook:v1.0.0
-          image: registry.cn-guangzhou.aliyuncs.com/jessedev/wechat-webhook-adapter:v1.0.0
-          imagePullPolicy:  Always # 本地镜像用 IfNotPresent，远程用 Always
+          # 修改为你的镜像地址（本地镜像用 IfNotPresent，远程用 Always）
+          image: registry.cn-guangzhou.aliyuncs.com/jessedev/wechat-webhook-adapter:v1.0.0-arm64
+          imagePullPolicy: Always
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
           env:
-            # ==================== 重要：修改为你的企业微信机器人 Key ====================
+            # 修改为你的企业微信机器人 Key
             - name: WECHAT_WEBHOOK_KEY
-              value: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              value: "3ec2b06b-c0f6-4279-876a-5b5fc227aadf"
             - name: WEBHOOK_PORT
               value: "80"
+            - name: GOMAXPROCS
+              value: "1"
+            - name: GOMEMLIMIT
+              value: "56MiB"
+
           ports:
             - containerPort: 80
               name: http
+              protocol: TCP
+
           resources:
             requests:
               memory: "32Mi"
@@ -67,19 +99,60 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
-          # 健康检查
+
+          # 启动探针
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 10
+            periodSeconds: 3
+
+          # 存活探针
           livenessProbe:
             httpGet:
               path: /health
-              port: 80
-            initialDelaySeconds: 5
+              port: http
+            initialDelaySeconds: 0
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # 就绪探针
           readinessProbe:
             httpGet:
               path: /health
-              port: 80
-            initialDelaySeconds: 3
+              port: http
+            initialDelaySeconds: 0
             periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 2
+
+          # 只读根文件系统需要的临时目录
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 32Mi
+
+      # 尽量分散到不同节点，提高可用性
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: wechat-webhook
+
+      # 容忍控制平面污点（按需启用）
+      # tolerations:
+      #   - key: "node-role.kubernetes.io/control-plane"
+      #     operator: "Exists"
+      #     effect: "NoSchedule"
 
 ---
 apiVersion: v1
@@ -87,10 +160,29 @@ kind: Service
 metadata:
   name: wechat-webhook-adapter
   namespace: monitoring
+  labels:
+    app.kubernetes.io/name: wechat-webhook
+    app.kubernetes.io/component: webhook-adapter
 spec:
   selector:
-    app: wechat-webhook
+    app.kubernetes.io/name: wechat-webhook
   ports:
     - port: 80
-      targetPort: 80
+      targetPort: http
+      protocol: TCP
       name: http
+
+---
+# Pod 中断预算：保证至少 1 个 Pod 在滚动更新或节点驱逐时始终可用
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: wechat-webhook-adapter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: wechat-webhook
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wechat-webhook
